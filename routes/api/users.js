@@ -213,6 +213,8 @@ router.patch(
       const newFile = await Jimp.read(temporaryName)
       newFile.resize(250, 250).quality(60).write(fileName)
 
+      fs.unlink(temporaryName)
+
       console.log(description)
 
       userToUpdate.avatarURL = `avatars/${filePath}/${newName}`
