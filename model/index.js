@@ -4,7 +4,8 @@ require('dotenv').config()
 
 const uriDb = process.env.DB_HOST
 
-const { userSchema } = require('./Schema')
+const contactsSchema = require('./contacts')
+const usersSchema = require('./users')
 
 mongoose.connect(uriDb, {
   useNewUrlParser: true,
@@ -24,6 +25,7 @@ db.once('open', function () {
   console.log('Database connection successful')
 })
 
-const Dbcontacts = db.model('Contacts', userSchema, 'contacts')
+const Dbcontacts = db.model('Contacts', contactsSchema, 'contacts')
+const Dbusers = db.model('Users', usersSchema, 'users')
 
-module.exports = { Dbcontacts }
+module.exports = { Dbcontacts, Dbusers }
