@@ -2,6 +2,14 @@ const express = require('express')
 const router = express.Router()
 const Joi = require('joi')
 const jwt = require('jsonwebtoken')
+const path = require('path')
+const fs = require('fs').promises
+const multer = require('multer')
+const gravatar = require('gravatar')
+var Jimp = require('jimp')
+
+const uploadDir = path.join(process.cwd(), 'temp')
+const storeImage = path.join(process.cwd(), 'public/avatars')
 
 const auth = require('./middlewares/auth')
 const { Dbusers } = require('../../model')
@@ -10,22 +18,42 @@ const { signupSchema } = require('./validators/usersValidator')
 require('dotenv').config()
 const secret = process.env.SECRET
 
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadDir)
+  },
+  filename: (req, file, cb) => {
+    cb(null, file.originalname)
+  },
+  limits: {
+    fileSize: 1048576,
+  },
+})
+
+const upload = multer({ storage })
+
 router.post('/signup', async (req, res, next) => {
   try {
-    const validBody = Joi.attempt(req.body, signupSchema, 'Validation failed: ')
+    const { email, password } = Joi.attempt(
+      req.body,
+      signupSchema,
+      'Validation failed: ',
+    )
 
-    const isInUse = await Dbusers.findOne({ email: validBody.email })
+    const isInUse = await Dbusers.findOne({ email })
 
     if (isInUse)
-      res.status(409).json({
+      return res.status(409).json({
         status: 'failure',
         code: 409,
         message: 'Email in use',
       })
 
-    const newUser = new Dbusers(validBody)
-    newUser.setPassword(validBody.password)
+    const avatarURL = gravatar.url(email, { s: '250', d: 'identicon' }, true)
+    const newUser = new Dbusers({ email, avatarURL })
+    newUser.setPassword(password)
     const user = await newUser.save()
+
     res.status(201).json({
       status: 'success',
       code: 201,
@@ -150,4 +178,65 @@ router.get('/current', auth, async (req, res, next) => {
   }
 })
 
-module.exports = router
+router.patch(
+  '/avatars',
+  auth,
+  upload.single('avatarURL'),
+  async (req, res, next) => {
+    try {
+      const { _id } = req.user
+
+      const { description } = req.body
+      const { path: temporaryName, originalname } = req.file
+
+      const userToUpdate = await Dbusers.findById(_id)
+
+      if (!userToUpdate) {
+        return res.status(401).json({
+          status: 'error',
+          code: 401,
+          message: 'Not authorized',
+        })
+      }
+
+      const filePath = new Date()
+        .toLocaleDateString('en-US', {
+          timeZone: 'America/Los_Angeles',
+        })
+        .split('/')
+        .reverse()
+        .join('/')
+
+      const newName = `${Date.now()}-${originalname}`
+      const fileName = path.join(storeImage, filePath, newName)
+
+      const newFile = await Jimp.read(temporaryName)
+      newFile.resize(250, 250).quality(60).write(fileName)
+
+      console.log(description)
+
+      userToUpdate.avatarURL = `avatars/${filePath}/${newName}`
+
+      const { avatarURL } = await userToUpdate.save()
+
+      res.status(200).json({
+        status: 'success',
+        code: 200,
+        description,
+        message: 'Файл успешно загружен',
+        data: {
+          avatarURL,
+        },
+      })
+    } catch ({ message }) {
+      res.status(400).json({
+        status: 'failure',
+        code: 400,
+        message,
+      })
+      console.log(`Avatar upload error: ${message}`)
+    }
+  },
+)
+
+module.exports = { usersRouter: router, uploadDir, storeImage }
