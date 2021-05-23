@@ -12,8 +12,9 @@ const uploadDir = path.join(process.cwd(), 'temp')
 const storeImage = path.join(process.cwd(), 'public/avatars')
 
 const auth = require('./middlewares/auth')
+const sendMail = require('./middlewares/nodemailer')
 const { Dbusers } = require('../../model')
-const { signupSchema } = require('./validators/usersValidator')
+const { signupSchema, loginSchema } = require('./validators/usersValidator')
 
 require('dotenv').config()
 const secret = process.env.SECRET
@@ -32,25 +33,17 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage })
 
-router.post('/signup', async (req, res, next) => {
+router.post('/signup', sendMail, async (req, res, next) => {
   try {
-    const { email, password } = Joi.attempt(
-      req.body,
+    const userFields = { ...req.body, verifyToken: req.verifyToken }
+    const { email, password, verifyToken } = Joi.attempt(
+      userFields,
       signupSchema,
       'Validation failed: ',
     )
 
-    const isInUse = await Dbusers.findOne({ email })
-
-    if (isInUse)
-      return res.status(409).json({
-        status: 'failure',
-        code: 409,
-        message: 'Email in use',
-      })
-
     const avatarURL = gravatar.url(email, { s: '250', d: 'identicon' }, true)
-    const newUser = new Dbusers({ email, avatarURL })
+    const newUser = new Dbusers({ email, avatarURL, verifyToken })
     newUser.setPassword(password)
     const user = await newUser.save()
 
@@ -69,21 +62,87 @@ router.post('/signup', async (req, res, next) => {
   }
 })
 
+router.get('/verify/:verifyToken', sendMail, async (req, res, next) => {
+  try {
+    const { verifyToken } = req
+    const verifiedUser = await Dbusers.findOneAndUpdate(
+      { verifyToken },
+      { verify: true, verifyToken: 'null' },
+    )
+
+    if (!verifiedUser) {
+      return res.status(404).json({
+        status: 'failure',
+        code: 404,
+        message: 'Not found',
+      })
+    }
+
+    res.status(201).json({
+      status: 'success',
+      code: 201,
+      data: 'Verification successful',
+    })
+  } catch ({ message }) {
+    res.status(400).json({
+      status: 'failure',
+      code: 400,
+      message,
+    })
+    console.log(`Verification error: ${message}`)
+  }
+})
+
+router.post('/verify/', sendMail, async (req, res, next) => {
+  try {
+    const { verifyToken } = req
+
+    if (!verifyToken) {
+      return res.status(404).json({
+        status: 'failure',
+        code: 404,
+        message: 'Not found',
+      })
+    }
+
+    res.status(200).json({
+      status: 'success',
+      code: 200,
+      data: 'Verification email sent',
+    })
+  } catch ({ message }) {
+    res.status(400).json({
+      status: 'failure',
+      code: 400,
+      message,
+    })
+    console.log(`Send mail repeat error: ${message}`)
+  }
+})
+
 router.post('/login', async (req, res, next) => {
   try {
     const { email, password } = Joi.attempt(
       req.body,
-      signupSchema,
+      loginSchema,
       'Validation failed: ',
     )
     const unauthUser = await Dbusers.findOne({ email })
 
     if (!unauthUser || !unauthUser.validPassword(password)) {
       return res.status(401).json({
-        status: 'error',
+        status: 'failure',
         code: 401,
         message: 'Email or password is wrong',
         data: 'Bad request',
+      })
+    }
+
+    if (unauthUser.verify === false) {
+      return res.status(401).json({
+        status: 'failure',
+        code: 401,
+        message: 'Verification required',
       })
     }
 
